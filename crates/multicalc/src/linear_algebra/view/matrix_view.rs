@@ -1,8 +1,11 @@
 //! The borrowed matrix views, and the [`Matrix`] methods that hand them out.
 
+use core::ops::Mul;
+
 use super::{VectorView, VectorViewMut, required_len};
 use crate::error::LinalgError;
-use crate::linear_algebra::Matrix;
+use crate::linear_algebra::{Matrix, Vector};
+use crate::scalar::Numeric;
 
 /// A borrowed, strided, read-only `ROWS`×`COLS` window onto someone else's storage.
 ///
@@ -346,6 +349,29 @@ impl<'data, const ROWS: usize, const COLS: usize, T: PartialEq> PartialEq
         (0..ROWS).all(|row| {
             (0..COLS).all(|column| self.try_get(row, column) == other.try_get(row, column))
         })
+    }
+}
+
+impl<'data, 'input, const ROWS: usize, const COLS: usize, T: Numeric>
+    Mul<VectorView<'input, COLS, T>> for MatrixView<'data, ROWS, COLS, T>
+{
+    type Output = Vector<ROWS, T>;
+
+    /// One dot product per row. The borrowed counterpart of [`Matrix`]'s own `Mul<Vector>`:
+    /// neither operand is copied first, so the coefficients are read where they lie.
+    ///
+    /// ```
+    /// use multicalc::linear_algebra::{Matrix, Vector};
+    /// let matrix = Matrix::new([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+    /// let input = Vector::new([10.0, 20.0, 30.0]);
+    /// assert_eq!((matrix.view() * input.view()).into_array(), [140.0, 320.0]);
+    /// ```
+    #[inline]
+    fn mul(self, rhs: VectorView<'input, COLS, T>) -> Vector<ROWS, T> {
+        // `from_fn` only ever asks for `row < ROWS`, and a view that exists already spans
+        // `ROWS` rows, so `try_row` cannot miss. `map_or` keeps the path total without an
+        // assertion, the same way `VectorView::dot` handles its own impossible misses.
+        Vector::from_fn(|row| self.try_row(row).map_or(T::ZERO, |left| left.dot(rhs)))
     }
 }
 
