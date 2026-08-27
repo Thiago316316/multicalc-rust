@@ -1,7 +1,5 @@
 //! The borrowed matrix views, and the [`Matrix`] methods that hand them out.
 
-use core::ops::Mul;
-
 use super::{VectorView, VectorViewMut, required_len};
 use crate::error::LinalgError;
 use crate::linear_algebra::{Matrix, Vector};
@@ -340,6 +338,33 @@ impl<'data, const ROWS: usize, const COLS: usize, T: Copy> MatrixView<'data, ROW
     }
 }
 
+impl<'data, const ROWS: usize, const COLS: usize, T: Numeric> MatrixView<'data, ROWS, COLS, T> {
+    /// `self · input`, one dot product per row. The borrowed counterpart of [`Matrix`]'s own
+    /// `Mul<Vector>`: neither operand is copied first, so the coefficients are read where they
+    /// lie, and only the `ROWS` results are written.
+    ///
+    /// `OutOfBounds` cannot actually be returned — the shapes are const parameters settled at
+    /// the call site, so there is no subscript left to miss — but the signature stays fallible
+    /// so that the whole view surface reads the same way.
+    ///
+    /// ```
+    /// use multicalc::linear_algebra::{Matrix, Vector};
+    /// let matrix = Matrix::new([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+    /// let input = Vector::new([10.0, 20.0, 30.0]);
+    /// let product = matrix.view().try_mul(input.view()).unwrap();
+    /// assert_eq!(product.into_array(), [140.0, 320.0]);
+    /// ```
+    #[inline]
+    pub fn try_mul(self, input: VectorView<'_, COLS, T>) -> Result<Vector<ROWS, T>, LinalgError> {
+        let mut result = Vector::<ROWS, T>::zeros();
+        for row in 0..ROWS {
+            let slot = result.get_mut(row).ok_or(LinalgError::OutOfBounds)?;
+            *slot = self.try_row(row)?.dot(input);
+        }
+        Ok(result)
+    }
+}
+
 impl<'data, const ROWS: usize, const COLS: usize, T: PartialEq> PartialEq
     for MatrixView<'data, ROWS, COLS, T>
 {
@@ -349,29 +374,6 @@ impl<'data, const ROWS: usize, const COLS: usize, T: PartialEq> PartialEq
         (0..ROWS).all(|row| {
             (0..COLS).all(|column| self.try_get(row, column) == other.try_get(row, column))
         })
-    }
-}
-
-impl<'data, 'input, const ROWS: usize, const COLS: usize, T: Numeric>
-    Mul<VectorView<'input, COLS, T>> for MatrixView<'data, ROWS, COLS, T>
-{
-    type Output = Vector<ROWS, T>;
-
-    /// One dot product per row. The borrowed counterpart of [`Matrix`]'s own `Mul<Vector>`:
-    /// neither operand is copied first, so the coefficients are read where they lie.
-    ///
-    /// ```
-    /// use multicalc::linear_algebra::{Matrix, Vector};
-    /// let matrix = Matrix::new([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
-    /// let input = Vector::new([10.0, 20.0, 30.0]);
-    /// assert_eq!((matrix.view() * input.view()).into_array(), [140.0, 320.0]);
-    /// ```
-    #[inline]
-    fn mul(self, rhs: VectorView<'input, COLS, T>) -> Vector<ROWS, T> {
-        // `from_fn` only ever asks for `row < ROWS`, and a view that exists already spans
-        // `ROWS` rows, so `try_row` cannot miss. `map_or` keeps the path total without an
-        // assertion, the same way `VectorView::dot` handles its own impossible misses.
-        Vector::from_fn(|row| self.try_row(row).map_or(T::ZERO, |left| left.dot(rhs)))
     }
 }
 
