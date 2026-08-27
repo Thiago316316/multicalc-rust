@@ -746,7 +746,7 @@ fn the_product_agrees_with_the_owned_operator() {
     let matrix = counted::<3, 4>();
     let input = Vector::new([1.0, -2.0, 0.5, 4.0]);
 
-    assert_eq!(matrix.view() * input.view(), matrix * input);
+    assert_eq!(matrix.view().try_mul(input.view()), Ok(matrix * input));
 }
 
 #[test]
@@ -756,8 +756,8 @@ fn the_product_reads_a_transposed_view_without_reshaping_the_buffer() {
 
     // A transpose is a stride swap, not storage, so this walks the buffer by column.
     assert_eq!(
-        matrix.view().transposed() * input.view(),
-        matrix.transpose() * input
+        matrix.view().transposed().try_mul(input.view()),
+        Ok(matrix.transpose() * input)
     );
 }
 
@@ -768,7 +768,10 @@ fn the_product_reads_a_submatrix_at_its_own_offset_and_stride() {
     let ones = Vector::new([1.0, 1.0]);
 
     // Rows 1 and 2, columns 2 and 3 of a 0..11 counting matrix, so [[6, 7], [10, 11]].
-    assert_eq!((block * ones.view()).into_array(), [13.0, 21.0]);
+    assert_eq!(
+        block.try_mul(ones.view()).unwrap().into_array(),
+        [13.0, 21.0]
+    );
 }
 
 #[test]
@@ -776,7 +779,10 @@ fn the_product_of_a_zero_row_is_zero_whatever_the_input() {
     let matrix = Matrix::<2, 3>::new([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]);
     let input = Vector::new([3.0, -7.0, 11.0]);
 
-    assert_eq!((matrix.view() * input.view()).into_array(), [0.0, 7.0]);
+    assert_eq!(
+        matrix.view().try_mul(input.view()).unwrap().into_array(),
+        [0.0, 7.0]
+    );
 }
 
 // ----- properties -----
@@ -788,10 +794,10 @@ fn check_view_product_matches_owned<const ROWS: usize, const COLS: usize>(
 ) -> Result<(), TestCaseError> {
     // The view accumulates its rows in the order the owned operator does, so the two agree bit
     // for bit rather than merely closely.
-    prop_assert_eq!(matrix.view() * input.view(), matrix * input);
+    prop_assert_eq!(matrix.view().try_mul(input.view()), Ok(matrix * input));
     prop_assert_eq!(
-        matrix.view().transposed() * transposed_input.view(),
-        matrix.transpose() * transposed_input
+        matrix.view().transposed().try_mul(transposed_input.view()),
+        Ok(matrix.transpose() * transposed_input)
     );
     Ok(())
 }
