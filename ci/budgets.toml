@@ -7,6 +7,9 @@
 # binary's budget and never spends another domain's headroom.
 #
 #   text_bytes            .text size of the release smoke binary.
+#   rodata_bytes          .rodata size of the same binary — read-only data, not code. A large
+#                         golden (a model, a policy's weights) lands here and leaves .text almost
+#                         untouched, so a .text budget on its own would not see it arrive.
 #   stack_bytes_<scalar>  peak stack for that scalar type, matched to a
 #                         STACK_HWM_BYTES_<SCALAR>=<n> line in the run output. The bare
 #                         STACK_HWM_BYTES=<n> line counts as the f64 measurement.
@@ -30,6 +33,20 @@
 # inverse-kinematics check that already sets the peak. The thumbv6m canary builds
 # --no-default-features and does not compile the Franka check, so its numbers are unchanged.
 #
+# Re-baselined when the smoke set gained the learned-policy check. The growth is almost all
+# .rodata: the policy's 5,892 f32 parameters are 23 KB of read-only data, and with the eight
+# observations and their goldens the section grows by ~24.6 KB on each of the three full-set
+# targets. .text moves 2-3% — the forward pass monomorphized for f32, and nothing else. This is
+# what prompted gating .rodata at all: measured against .text alone, the largest thing the check
+# adds to the image was invisible. The thumbv6m canary builds --no-default-features and does not
+# compile the policy check, so both its numbers are unchanged to the byte, which is the intended
+# result: the M0 pays nothing for a check it does not run.
+#
+# The .text figures are the previous baselines plus the growth measured locally, so they stay
+# calibrated to whatever toolchain set them. The .rodata figures have no such history and are
+# first measurements taken locally on rustc 1.97.0; if CI's differ by more than tolerance_pct,
+# the failing run prints the number to re-baseline from.
+#
 # Run the gate for one (binary, target):
 #   cargo run -p <binary> --release --target <triple> | tee smoke-<binary>-<triple>.txt
 #   bash ci/check_budgets.sh <binary> <triple> smoke-<binary>-<triple>.txt
@@ -40,17 +57,21 @@
 tolerance_pct = 10
 
 [embedded-smoke.thumbv7em-none-eabi]
-text_bytes = 166492
+text_bytes = 171344
+rodata_bytes = 65408
 stack_bytes_f64 = 3311
 
 [embedded-smoke.thumbv7em-none-eabihf]
-text_bytes = 181860
+text_bytes = 185404
+rodata_bytes = 65472
 stack_bytes_f64 = 3631
 
 [embedded-smoke.thumbv6m-none-eabi]
 text_bytes = 43536
+rodata_bytes = 6424
 stack_bytes_f64 = 908
 
 [embedded-smoke.riscv32imc-unknown-none-elf]
-text_bytes = 196400
+text_bytes = 200316
+rodata_bytes = 66112
 stack_bytes_f64 = 3291

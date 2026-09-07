@@ -18,8 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the end leaves the read position where it was. Layer widths are const parameters, so a mismatched
   chain fails to compile. Checked end to end against numpy goldens — a sampled 22→64→64→4 policy
   with its hidden activations stored, plus an activation table pinning each nonlinearity at zero,
-  at an ordinary value and where `Tanh` saturates — at both precisions on the host.
-  @Thiago316316 (#83)
+  at an ordinary value and where `Tanh` saturates — at both precisions on the host, and on the four
+  bare-metal targets, where the policy is read in `f32` straight out of flash so a 23 KB export
+  runs on a part with 64 KB of RAM. @Thiago316316 (#83)
 
 - **Zero-copy matrix and vector views.** `Matrix::view` / `view_mut` and `Vector::view` /
   `view_mut` hand out `MatrixView` / `VectorView` and their `Mut` counterparts: a flat slice, an

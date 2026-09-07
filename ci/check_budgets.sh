@@ -126,6 +126,14 @@ printf '%s' "$text_now" | grep -qE '^[0-9]+$' || { echo "$size_out" >&2; die \
   "Look for a '.text' row in the 'cargo size ... -- -A' output above."; }
 check "text_bytes" "$text_now" "$(read_budget text_bytes)"
 
+# ---- Measure .rodata -------------------------------------------------------
+# Same image, read-only data rather than code. A missing section reads as 0.
+rodata_now=$(printf '%s\n' "$size_out" | awk '$1 == ".rodata" { print $2; exit }')
+[ -n "$rodata_now" ] || rodata_now=0
+printf '%s' "$rodata_now" | grep -qE '^[0-9]+$' || { echo "$size_out" >&2; die \
+  "could not parse a numeric .rodata size for $binary/$target (got '$rodata_now')." \
+  "Look for a '.rodata' row in the 'cargo size ... -- -A' output above."; }
+check "rodata_bytes" "$rodata_now" "$(read_budget rodata_bytes)"
 # ---- Per-scalar stack ------------------------------------------------------
 keys=$(scalar_keys)
 if [ -z "$keys" ]; then

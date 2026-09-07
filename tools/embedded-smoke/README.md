@@ -37,14 +37,17 @@ Aliases: `cargo smoke-eabi`, `cargo smoke-eabihf`, `cargo smoke-m0`, `cargo smok
 | `thumbv7em-none-eabi`         | Cortex-M4, soft-float  | `netduinoplus2`       | 64K  |
 | `thumbv7em-none-eabihf`       | Cortex-M4, hard-float  | `netduinoplus2`       | 64K  |
 | `thumbv6m-none-eabi`          | Cortex-M0, CAS-free    | `microbit`            | 16K  |
-| `riscv32imc-unknown-none-elf` | RV32IMC, soft-float    | `virt` (`-bios none`) | 256K |
+| `riscv32imc-unknown-none-elf` | RV32IMC, soft-float    | `virt` (`-bios none`) | 512K |
 
-The `thumbv7em` ABIs run on `netduinoplus2` (Cortex-M4, FPU, 64K RAM, flash at
-`0x08000000`). `thumbv6m` runs on `microbit` (Cortex-M0, nRF51, 16K RAM, flash
-at `0x0`) — a real M0 core, so the run now asserts both RAM-size and ISA
-fidelity: an oversized image or an out-of-ISA (ARMv7E-M) instruction faults just
-as it would on silicon. `riscv32imc` runs on QEMU `virt` with `-bios none`
-(DRAM at `0x80000000`). `build.rs` picks each target's memory map.
+The `thumbv7em` ABIs run on `netduinoplus2` (the STM32F405, 1 MB flash at `0x08000000`). Its
+64K RAM is half the real part's, on purpose: it is what forces the learned-policy check to read
+its 23 KB of weights out of flash rather than copy them.
+
+`thumbv6m` runs on `microbit` (Cortex-M0, nRF51, 16K RAM, flash at `0x0`) — a real M0 core, so an
+oversized image or an out-of-ISA (ARMv7E-M) instruction faults just as it would on silicon.
+`riscv32imc` runs on QEMU `virt` with `-bios none` (DRAM at `0x80000000`), where code and data
+share one region and the table's 512K is a linker-script budget, not a machine limit (QEMU `virt`
+comes up with 128 MiB). `build.rs` picks each target's memory map.
 
 The runners and `rustflags` (`-Tlink.x`, `--nmagic`) live in
 `.cargo/config.toml`; the per-target memory map is supplied by `build.rs`.
@@ -61,11 +64,13 @@ stay small, safe, and portable, while this crate stays dev-only and never ships.
 
 ## Checks
 
-`src/checks.rs` holds the on-target cases against the public API. Each asserts a
-known answer to a tolerance, so a wrong result panics instead of passing, and
-every check stays `no_std`. Golden checks assert against values taken from the
-host QA fixtures (`src/fixtures.rs`, generated from `tools/qa`); identity
-checks assert a mathematical identity that needs no fixture.
+`src/checks.rs` holds the on-target cases against the public API, each asserting a
+known answer to a tolerance so a wrong result panics instead of passing. Golden
+checks compare against the host QA fixtures (`src/fixtures.rs`); identity checks
+assert a mathematical identity that needs no fixture. Two inputs are large enough
+to get generated files of their own: the Franka model (`src/franka_panda_model.rs`)
+and the learned policy's parameters (`src/mlp_policy.rs`). CI regenerates all three
+and diffs, so none can drift from the fixtures they came from.
 
 The set is tiered by the `full-smoke` feature (on by default): the canary runs on
 every target including the Cortex-M0; the full set adds the heavier checks on the
@@ -98,6 +103,7 @@ every target including the Cortex-M0; the full set adds the heavier checks on th
 | `piecewise_polynomial_golden` | full set | Golden: a planned minimum-snap trajectory evaluated for position, velocity and acceleration vs the `minimum_snap_three_segments_3d` QA golden. This is the hot-loop path a controller follows; planning stays host-side. Emits `SMOKE_VAL_piecewise`. |
 | `multivariate_identity` | full set | Identity: `3x²y + 2xy − 1` and its slopes at `(1.5, −2)`, exercising whole-number powers on target. Emits `SMOKE_VAL_multivariate`. |
 | `polynomial_evaluate_identity_f32` | full set | Identity in `f32`: the same degree-7 evaluation at single precision, where soft-float and the hardware FPU are most likely to differ. Emits `SMOKE_VAL_poly_f32`. |
+| `mlp_policy_f32` | full set | Golden: a learned 22→64→64→4 policy run in `f32` straight out of flash, vs the `policy_22x64x64x4` QA golden on all eight observations. Its 5,892 parameters are a `static` that `ParameterCursor` splits into three borrowed layers, so a 23 KB policy fits a part with 64 KB of RAM. Emits `SMOKE_VAL_mlp_action_x`. |
 
 ## Pass/fail contract
 
@@ -130,10 +136,10 @@ identical across machines. If a target cannot yield a stable number, drop its
 
 ## Size and stack gate
 
-`ci/budgets.toml` holds per-target `.text` and stack budgets with a shared
-`tolerance_pct`. `ci/check_budgets.sh` reads `.text` via `cargo size -- -A`,
-parses `STACK_HWM_BYTES` from the run output, and fails if either exceeds
-`budget × (1 + tolerance_pct/100)`:
+`ci/budgets.toml` holds per-target `.text`, `.rodata` and stack budgets with a
+shared `tolerance_pct`. `ci/check_budgets.sh` reads both sections via
+`cargo size -- -A`, parses `STACK_HWM_BYTES` from the run output, and fails if
+any exceeds `budget × (1 + tolerance_pct/100)`:
 
 ```sh
 cargo run -p embedded-smoke --release --target thumbv6m-none-eabi | tee smoke.txt

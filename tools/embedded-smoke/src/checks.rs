@@ -23,6 +23,7 @@ use multicalc::estimation::{
 };
 use multicalc::linear_algebra::{Matrix, Matrix2D, Matrix3D, Vector, Vector2D};
 use multicalc::mapping::{MutableOccupancyMap, OccupancyMap};
+use multicalc::mlp_inference::{Activation, ParameterCursor};
 use multicalc::numerical_derivative::DerivatorSingleVariable;
 use multicalc::numerical_derivative::Jacobian;
 use multicalc::numerical_derivative::{AutoDiffMulti, AutoDiffSingle};
@@ -896,6 +897,59 @@ pub fn geometric_jacobian_identity() -> f64 {
     );
     assert_close!("jac_weld", black_box(weld.linear().norm()), 0.0, 1e-12, 0.0);
     black_box(shoulder.linear()[1])
+}
+
+/// Golden: the learned quadrotor policy, run on target in single precision, must put its actions
+/// where the host golden puts them (mlp/policy_22x64x64x4). Full set only.
+///
+/// The one check that demonstrates the zero-copy claim rather than asserting it. The 5,892
+/// parameters stay in flash as a `static`, `ParameterCursor` splits one borrow of them into three
+/// layers, and nothing between the flash and the answer copies a weight — which is why a 23 KB
+/// policy runs at all on a part with 64 KB of RAM. Walking the cursor to its end checks that the
+/// three shapes below account for every number the export holds.
+///
+/// Returns the first action component for the cross-ABI guard.
+#[cfg_attr(not(feature = "full-smoke"), allow(dead_code))]
+pub fn mlp_policy_f32() -> f64 {
+    let mut cursor = ParameterCursor::new(&crate::mlp_policy::POLICY_PARAMETERS[..]);
+    let first = cursor
+        .try_take_layer::<64, 22>(Activation::Relu)
+        .unwrap_or_else(|_| unreachable!("5,892 parameters hold the first layer"));
+    let second = cursor
+        .try_take_layer::<64, 64>(Activation::Relu)
+        .unwrap_or_else(|_| unreachable!("and the second"));
+    let output = cursor
+        .try_take_layer::<4, 64>(Activation::Tanh)
+        .unwrap_or_else(|_| unreachable!("and the third"));
+    assert!(cursor.is_empty(), "parameters left after the last layer");
+
+    let mut first_action = 0.0;
+    for sample in 0..fixtures::MLP_OBSERVATIONS.len() {
+        let observation: Vector<22, f32> =
+            Vector::from_fn(|axis| fixtures::MLP_OBSERVATIONS[sample][axis]);
+        let hidden = first
+            .forward(black_box(&observation).view())
+            .unwrap_or_else(|_| unreachable!("widths agree"));
+        let hidden = second
+            .forward(hidden.view())
+            .unwrap_or_else(|_| unreachable!("widths agree"));
+        let action = output
+            .forward(hidden.view())
+            .unwrap_or_else(|_| unreachable!("widths agree"));
+        for axis in 0..4 {
+            assert_close!(
+                "mlp_action",
+                f64::from(black_box(action[axis])),
+                fixtures::MLP_ACTIONS[sample][axis],
+                fixtures::MLP_POLICY_ABS,
+                fixtures::MLP_POLICY_REL
+            );
+        }
+        if sample == 0 {
+            first_action = f64::from(action[0]);
+        }
+    }
+    black_box(first_action)
 }
 
 /// Golden: the Franka arm built from its own model file, read on target in single precision,
