@@ -22,6 +22,7 @@ from generators import (
     kinematics,
     linalg,
     mjcf,
+    mlp,
     motion,
     ode,
     optimization,
@@ -67,6 +68,7 @@ def main():
     polynomial.run(args.out, SEED)
     motion.run(args.out, SEED)
     control.run(args.out, SEED)
+    mlp.run(args.out, SEED)
 
 
 if __name__ == "__main__":
