@@ -117,6 +117,8 @@ impl<D: DerivatorMultiVariable> Hessian<D> {
     ) -> Result<Vec<Vec<D::Scalar>>, DiffError> {
         let mut result: Vec<Vec<D::Scalar>> = vec![vec![D::Scalar::ZERO; NUM_VARS]; NUM_VARS];
 
+        // the explicit indices are needed for the mirror write `result[col_index][row_index]`.
+        #[allow(clippy::needless_range_loop)]
         for row_index in 0..NUM_VARS {
             for col_index in row_index..NUM_VARS {
                 let value = self.derivator.second_partial_derivative(
